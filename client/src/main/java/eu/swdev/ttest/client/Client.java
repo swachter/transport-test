@@ -278,11 +278,7 @@ public class Client {
 
   public static void main(String[] args) throws Exception {
 
-    Pattern pattern = Pattern.compile("^0:(\\d+)$", Pattern.MULTILINE);
-    Matcher matcher = pattern.matcher("0:1202\n1:1000\n");
-    boolean found = matcher.find();
-
-
+    usage();
     new Client().repl();
 
   }
@@ -302,6 +298,7 @@ public class Client {
     System.out.println("s: show current post statistics");
     System.out.println("S: show current post statistics and server counts");
     System.out.println("i: show current parameters");
+    System.out.println("h: show this help message");
     System.out.println("");
     System.out.println("q: quit");
   }
