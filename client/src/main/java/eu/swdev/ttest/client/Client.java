@@ -7,18 +7,22 @@ import org.eclipse.californium.core.CoapResponse;
 import org.eclipse.californium.core.coap.CoAP;
 import org.eclipse.californium.core.network.CoapEndpoint;
 import org.eclipse.californium.core.network.config.NetworkConfig;
+import org.eclipse.californium.scandium.DTLSConnector;
 
 import java.io.PushbackInputStream;
+import java.net.InetSocketAddress;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public class Client {
 
-  public static final String host = System.getProperty("host", "localhost");
+  public static final boolean remoteHost = System.getProperty("remote") != null;
+  public static final String host = System.getProperty("host", remoteHost ? "swachter.p7.de" : "localhost");
 
   private enum PostResult {
     Null, Success, Failure, Exception;
@@ -26,7 +30,47 @@ public class Client {
 
   private static NetworkConfig networkConfig = NetworkConfig.createStandardWithoutFile();
 
+  private static class DtlsCoapClient extends CoapClient {
+
+    private final AtomicLong lastAccess = new AtomicLong();
+    private final DTLSConnector connector;
+
+    public DtlsCoapClient(DTLSConnector connector, String scheme, String host, int port, String... path) {
+      super(scheme, host, port, path);
+      this.connector = connector;
+    }
+
+    private void checkLastAccess() {
+      if (lastAccess.get() < System.currentTimeMillis() - 30000) {
+        System.out.println("####### -> force resume");
+        connector.forceResumeAllSessions();
+        System.out.println("####### <- force resume");
+      }
+      lastAccess.set(System.currentTimeMillis());
+    }
+
+    @Override
+    public CoapResponse get() {
+      checkLastAccess();
+      return super.get();
+    }
+
+    @Override
+    public CoapResponse post(String payload, int format) {
+      checkLastAccess();
+      return super.post(payload, format);
+    }
+  }
+
+  private static CoapClient createDtlsCoapClient() {
+    DTLSConnector connector = Util.createDtlsConnector("client", new InetSocketAddress(0));
+    return new DtlsCoapClient(connector, "coaps", host, 5684, "dtls")
+        .useNONs()
+        .setEndpoint(new CoapEndpoint(connector, networkConfig));
+  }
+
   private enum Protocol {
+
     Udp(
         'u',
         new CoapClient("coap", host, 5683, "udp")
@@ -34,9 +78,10 @@ public class Client {
     ),
     Dtls(
         'U',
-        new CoapClient("coaps", host, 5684, "dtls")
+        createDtlsCoapClient()
             .useNONs()
-            .setEndpoint(new CoapEndpoint(Util.createDtlsConnector("client", 0), networkConfig))
+            .setEndpoint(new CoapEndpoint(Util.createDtlsConnector("client", new InetSocketAddress(0)), networkConfig))
+        .setTimeout(10000)
     ),
     Tcp(
         't',
@@ -48,8 +93,7 @@ public class Client {
         new CoapClient("coaps+tcp", host, 5686, "tls")
             .useNONs()
             .setEndpoint(new CoapEndpoint(Util.createTlsClientConnector(), networkConfig))
-    )
-   ;
+    );
 
     private final char key;
     private final CoapClient coapClient;
@@ -135,17 +179,18 @@ public class Client {
     }
   }
 
+  static PushbackInputStream keyboardInput = new PushbackInputStream(System.in);
 
   Experiment experiment = new Experiment();
 
   int postRepetitions = 1;
 
-  void post(Protocol protocol) {
+  void post(Protocol protocol) throws Exception {
     Stats stats = experiment.getStats(protocol);
     for (int i = 0; i < postRepetitions; i++) {
-      long start = System.currentTimeMillis();
+      long start = System.nanoTime();
       PostResult postResult = protocol.post(experiment.number, stats.requests++);
-      long duration = System.currentTimeMillis() - start;
+      long duration = (System.nanoTime() - start + 500000) / 1000000;
       stats.getDurations(postResult).recordValue(duration);
     }
   }
@@ -158,20 +203,19 @@ public class Client {
     System.out.println("==> Stats (" + protocol + ")");
     Stats stats = experiment.getStats(protocol);
     System.out.println("posted requests: " + stats.requests);
-    for (Map.Entry<PostResult, Histogram> me: stats.durations.entrySet()) {
+    for (Map.Entry<PostResult, Histogram> me : stats.durations.entrySet()) {
       PostResult postResult = me.getKey();
       Histogram histogram = me.getValue();
       System.out.println("" + postResult + " - count: " + histogram.getTotalCount() +
           "; maxDuration: " + histogram.getMaxValue() + "; avg: " + histogram.getValueAtPercentile(0.5) + "; " +
-      "; p95: " + histogram.getValueAtPercentile(0.95));
+          "; p95: " + histogram.getValueAtPercentile(0.95));
     }
   }
 
   void repl() throws Exception {
     int r;
-    PushbackInputStream is = new PushbackInputStream(System.in);
 
-    while ((r = is.read()) != -1) {
+    while ((r = keyboardInput.read()) != -1) {
 
       switch (r) {
         case 'u':
@@ -200,17 +244,17 @@ public class Client {
           break;
 
         case 's':
-          for (Protocol p: protocols) {
+          for (Protocol p : protocols) {
             showStats(p);
           }
           break;
 
         case 'S':
-          for (Protocol p: protocols) {
+          for (Protocol p : protocols) {
             showStats(p);
             Integer countOnServer = p.get(experiment.number);
             if (countOnServer == null) {
-              System.out.println("countOnServer is unknown");
+              System.out.println("countOnServer keyboardInput unknown");
             } else {
               System.out.println("countOnSever: " + countOnServer + "; ratio: " + countOnServer.doubleValue() / experiment.getStats(p).requests);
             }
@@ -236,7 +280,7 @@ public class Client {
 
         // remove a protocol
         case '-': {
-          int i = is.read();
+          int i = keyboardInput.read();
           for (Protocol p : protocols) {
             if (p.key == (char) i) {
               protocols.remove(p);
@@ -248,7 +292,7 @@ public class Client {
 
         // add a protocol
         case '+': {
-          int i = is.read();
+          int i = keyboardInput.read();
           for (Protocol p : Protocol.values()) {
             if (p.key == (char) i) {
               protocols.add(p);

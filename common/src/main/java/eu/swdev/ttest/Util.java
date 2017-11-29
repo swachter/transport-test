@@ -21,7 +21,7 @@ public class Util {
   private static final String TRUST_STORE_PASSWORD = "rootPass";
   private static final String TRUST_STORE_LOCATION = "certs/trustStore.jks";
 
-  public static DTLSConnector createDtlsConnector(String clientOrServer, int port) {
+  public static DTLSConnector createDtlsConnector(String clientOrServer, InetSocketAddress addr) {
     try {
       InMemoryPskStore pskStore = new InMemoryPskStore();
       // put in the PSK store the default identity/psk for tinydtls tests
@@ -44,7 +44,7 @@ public class Util {
       trustedCertificates[0] = trustStore.getCertificate("root");
 
       DtlsConnectorConfig.Builder builder = new DtlsConnectorConfig.Builder();
-      builder.setAddress(new InetSocketAddress(port));
+      builder.setAddress(addr);
       builder.setPskStore(pskStore);
       builder.setIdentity((PrivateKey) keyStore.getKey(clientOrServer, KEY_STORE_PASSWORD.toCharArray()),
           keyStore.getCertificateChain(clientOrServer), true);

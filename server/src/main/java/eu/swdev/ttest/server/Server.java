@@ -11,10 +11,7 @@ import org.eclipse.californium.core.server.resources.CoapExchange;
 import org.eclipse.californium.core.server.resources.Resource;
 import org.eclipse.californium.elements.tcp.TcpServerConnector;
 
-import java.net.Inet4Address;
-import java.net.InetAddress;
-import java.net.InetSocketAddress;
-import java.net.URI;
+import java.net.*;
 import java.util.*;
 
 public class Server extends CoapServer {
@@ -52,8 +49,8 @@ public class Server extends CoapServer {
     for (InetAddress addr : EndpointManager.getEndpointManager().getNetworkInterfaces()) {
       // only binds to IPv4 addresses and localhost
       if (addr instanceof Inet4Address || addr.isLoopbackAddress()) {
-        InetSocketAddress bindToAddress = new InetSocketAddress(addr, COAP_PORT);
-        addEndpoint(new CoapEndpoint(bindToAddress) {
+        InetSocketAddress udpBindAddress = new InetSocketAddress(addr, COAP_PORT);
+        addEndpoint(new CoapEndpoint(udpBindAddress) {
           @Override
           public URI getUri() {
             try {
@@ -63,10 +60,33 @@ public class Server extends CoapServer {
             }
           }
         });
+        if (!(addr instanceof Inet6Address)) {
+          InetSocketAddress tcpBindAddress = new InetSocketAddress(addr, 5685);
+          addEndpoint(new CoapEndpoint(new TcpServerConnector(tcpBindAddress, 2, 10000), networkConfig) {
+            @Override
+            public URI getUri() {
+              try {
+                return super.getUri();
+              } catch (Exception e) {
+                return null;
+              }
+            }
+          });
+        }
       }
-      addEndpoint(new CoapEndpoint(Util.createDtlsConnector("server", 5684), networkConfig));
+      InetSocketAddress dtlsBindAddress = new InetSocketAddress(addr, 5684);
+      addEndpoint(new CoapEndpoint(Util.createDtlsConnector("server", dtlsBindAddress), networkConfig) {
+        @Override
+        public URI getUri() {
+          try {
+            return super.getUri();
+          } catch (Exception e) {
+            return null;
+          }
+        }
+      });
+
     }
-    addEndpoint(new CoapEndpoint(new TcpServerConnector(new InetSocketAddress(InetAddress.getByName("localhost"), 5685), 2, 10000), networkConfig));
     addEndpoint(new CoapEndpoint(Util.createTlsServerConnector(5686), networkConfig));
   }
 
