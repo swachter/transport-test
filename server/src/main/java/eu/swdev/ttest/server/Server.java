@@ -1,5 +1,6 @@
 package eu.swdev.ttest.server;
 
+import eu.swdev.ttest.DtlsSecurity;
 import eu.swdev.ttest.Util;
 import org.eclipse.californium.core.CoapResource;
 import org.eclipse.californium.core.CoapServer;
@@ -57,7 +58,7 @@ public class Server extends CoapServer {
         }
       }
       InetSocketAddress dtlsBindAddress = new InetSocketAddress(addr, 5684);
-      addEndpoint(new CoapEndpoint(Util.createDtlsConnector("server", dtlsBindAddress), networkConfig));
+      addEndpoint(new CoapEndpoint(Util.createDtlsConnector(dtlsBindAddress, DtlsSecurity.SERVER), networkConfig));
 
     }
     addEndpoint(new CoapEndpoint(Util.createTlsServerConnector(5686), networkConfig));

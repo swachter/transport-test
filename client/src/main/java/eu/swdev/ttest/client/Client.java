@@ -1,5 +1,6 @@
 package eu.swdev.ttest.client;
 
+import eu.swdev.ttest.DtlsSecurity;
 import eu.swdev.ttest.Util;
 import org.HdrHistogram.Histogram;
 import org.eclipse.californium.core.CoapClient;
@@ -63,8 +64,10 @@ public class Client {
     }
   }
 
+  private static DtlsSecurity dtlsSecurity = DtlsSecurity.CLIENT_PSK;
+
   private static CoapClient createDtlsCoapClient() {
-    DTLSConnector connector = Util.createDtlsConnector("client", new InetSocketAddress(0));
+    DTLSConnector connector = Util.createDtlsConnector(new InetSocketAddress(0), dtlsSecurity);
     return new DtlsCoapClient(connector, "coaps", host, 5684, "dtls")
         .useNONs()
         .setEndpoint(new CoapEndpoint(connector, networkConfig))
@@ -76,7 +79,7 @@ public class Client {
     System.out.println("code   : " + response.getCode());
     System.out.println("options: " + response.getOptions());
     System.out.println("text   : " + response.getResponseText());
-    System.out.println("RTT    : " + response.advanced().getRTT());
+    System.out.println("RTT    : " + response.advanced().getRTT() + "ms");
   }
 
   private enum Protocol {
@@ -275,6 +278,25 @@ public class Client {
           break;
         }
 
+        case 'h': {
+          if ((r = keyboardInput.read()) != -1) {
+            switch (r) {
+              case 'p':
+                dtlsSecurity = DtlsSecurity.CLIENT_PSK;
+                break;
+              case 'r':
+                dtlsSecurity = DtlsSecurity.CLIENT_RPK;
+                break;
+              case 'x':
+                dtlsSecurity = DtlsSecurity.CLIENT_X509;
+                break;
+              default:
+                System.out.println("unknown handshake '" + (char)r + "'; use p (for psk), r (for rpk), or x for (x.509)");
+                keyboardInput.unread(r);
+            }
+          }
+          break;
+        }
         case 'e':
           experiment = new Experiment();
           System.out.println("start new experiment #" + experiment.number);
@@ -339,13 +361,12 @@ public class Client {
         }
         break;
 
-        case 'h':
         case '?':
           usage();
           break;
 
         case 'i':
-          System.out.println("experiment: " + experiment.number + "; protocols: " + protocols + "; postRepetitions: " + postRepetitions);
+          System.out.println("experiment: " + experiment.number + "; protocols: " + protocols + "; handshake: " + dtlsSecurity.handshake + "; postRepetitions: " + postRepetitions);
           break;
 
         case 'q':
@@ -372,6 +393,7 @@ public class Client {
     System.out.println("p: post via all selected protocols");
     System.out.println("P: reset and post via all selected protocols");
     System.out.println("r: reset all selected protocols");
+    System.out.println("h<p|r|x>: set handshake (PSK, RPK, or X.509");
     System.out.println("");
     System.out.println("e: start a new experiment");
     System.out.println("n<digits*>: set number of post repetitions");
@@ -381,7 +403,7 @@ public class Client {
     System.out.println("s: show current post statistics");
     System.out.println("S: show current post statistics and server counts");
     System.out.println("i: show current parameters");
-    System.out.println("h: show this help message");
+    System.out.println("?: show this help message");
     System.out.println("");
     System.out.println("q: quit");
   }
