@@ -66,7 +66,8 @@ public class Client {
     DTLSConnector connector = Util.createDtlsConnector("client", new InetSocketAddress(0));
     return new DtlsCoapClient(connector, "coaps", host, 5684, "dtls")
         .useNONs()
-        .setEndpoint(new CoapEndpoint(connector, networkConfig));
+        .setEndpoint(new CoapEndpoint(connector, networkConfig))
+        .setTimeout(10000);
   }
 
   private enum Protocol {
@@ -79,9 +80,6 @@ public class Client {
     Dtls(
         'U',
         createDtlsCoapClient()
-            .useNONs()
-            .setEndpoint(new CoapEndpoint(Util.createDtlsConnector("client", new InetSocketAddress(0)), networkConfig))
-        .setTimeout(10000)
     ),
     Tcp(
         't',
