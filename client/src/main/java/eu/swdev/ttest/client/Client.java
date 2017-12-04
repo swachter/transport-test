@@ -7,7 +7,6 @@ import org.eclipse.californium.core.CoapResponse;
 import org.eclipse.californium.core.coap.CoAP;
 import org.eclipse.californium.core.network.CoapEndpoint;
 import org.eclipse.californium.core.network.config.NetworkConfig;
-import org.eclipse.californium.elements.tcp.TcpClientConnector;
 import org.eclipse.californium.scandium.DTLSConnector;
 
 import java.io.PushbackInputStream;
@@ -17,6 +16,7 @@ import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Supplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -42,7 +42,7 @@ public class Client {
     }
 
     private void checkLastAccess() {
-      if (lastAccess.get() < System.currentTimeMillis() - 30000) {
+      if (lastAccess.get() != 0 && lastAccess.get() < System.currentTimeMillis() - 30000) {
         System.out.println("####### -> force resume");
         connector.forceResumeAllSessions();
         System.out.println("####### <- force resume");
@@ -71,47 +71,54 @@ public class Client {
         .setTimeout(10000);
   }
 
+  private static void printResponse(String headline, CoapResponse response) {
+    System.out.println(headline);
+    System.out.println("code   : " + response.getCode());
+    System.out.println("options: " + response.getOptions());
+    System.out.println("text   : " + response.getResponseText());
+    System.out.println("RTT    : " + response.advanced().getRTT());
+  }
+
   private enum Protocol {
 
     Udp(
         'u',
-        new CoapClient("coap", host, 5683, "udp")
+        () -> new CoapClient("coap", host, 5683, "udp")
             .useNONs()
     ),
     Dtls(
         'U',
-        createDtlsCoapClient()
+        () -> createDtlsCoapClient()
     ),
     Tcp(
         't',
-        new CoapClient("coap+tcp", host, 5685, "tcp")
+        () -> new CoapClient("coap+tcp", host, 5685, "tcp")
             .useNONs()
             .setEndpoint(new CoapEndpoint(Util.createTcpClientConnector(), networkConfig))
     ),
     Tls(
         'T',
-        new CoapClient("coaps+tcp", host, 5686, "tls")
+        () -> new CoapClient("coaps+tcp", host, 5686, "tls")
             .useNONs()
             .setEndpoint(new CoapEndpoint(Util.createTlsClientConnector(), networkConfig))
     );
 
     private final char key;
-    private final CoapClient coapClient;
+    private final Supplier<CoapClient> coapClientSupplier;
+    private CoapClient coapClient;
 
-    Protocol(char key, CoapClient coapClient) {
+
+    Protocol(char key, Supplier<CoapClient> coapClientSupplier) {
       this.key = key;
-      this.coapClient = coapClient;
+      this.coapClientSupplier = coapClientSupplier;
+      coapClient = coapClientSupplier.get();
     }
 
     public PostResult post(int experiment, int request) {
       try {
         CoapResponse response = coapClient.post("" + experiment + ":" + request, 0);
         if (response != null) {
-          System.out.println("post response (" + this + ")");
-          System.out.println(response.getCode());
-          System.out.println(response.getOptions());
-          System.out.println(response.getResponseText());
-          System.out.println(response.advanced().getRTT());
+          printResponse("post response (" + this + ")", response);
           if (response.getCode().codeClass == CoAP.CodeClass.SUCCESS_RESPONSE.value) {
             return PostResult.Success;
           } else {
@@ -130,10 +137,7 @@ public class Client {
     public Integer get(int experiment) {
       CoapResponse response = coapClient.get();
       if (response != null) {
-        System.out.println("get response (" + this + ")");
-        System.out.println(response.getCode());
-        System.out.println(response.getOptions());
-        System.out.println(response.getResponseText());
+        printResponse("get response (" + this + ")", response);
         String text = response.getResponseText();
         Pattern pattern = Pattern.compile("^" + experiment + ":(\\d+)$", Pattern.MULTILINE);
         Matcher matcher = pattern.matcher(text);
@@ -147,6 +151,18 @@ public class Client {
         System.out.println("no get response received (" + this + ")");
         return null;
       }
+    }
+
+    public void reset() throws Exception {
+      // UDP-CoapClient uses default endpoint
+      // -> do not reset endpoint (UDP is sessionless anyway)
+      if (coapClient.getEndpoint() == null) {
+        System.out.println("can not reset protocol: " + this);
+        return;
+      }
+      coapClient.shutdown();
+      coapClient.getEndpoint().destroy();
+      coapClient = coapClientSupplier.get();
     }
   }
 
@@ -186,9 +202,9 @@ public class Client {
 
   int postRepetitions = 1;
 
-  void post(Protocol protocol) throws Exception {
+  void post(Protocol protocol, int repetitions) throws Exception {
     Stats stats = experiment.getStats(protocol);
-    for (int i = 0; i < postRepetitions; i++) {
+    for (int i = 0; i < repetitions; i++) {
       long start = System.nanoTime();
       PostResult postResult = protocol.post(experiment.number, stats.requests++);
       long duration = (System.nanoTime() - start + 500000) / 1000000;
@@ -220,24 +236,44 @@ public class Client {
 
       switch (r) {
         case 'u':
-          post(Protocol.Udp);
+          post(Protocol.Udp, postRepetitions);
           break;
         case 'U':
-          post(Protocol.Dtls);
+          post(Protocol.Dtls, postRepetitions);
           break;
         case 't':
-          post(Protocol.Tcp);
+          post(Protocol.Tcp, postRepetitions);
           break;
         case 'T':
-          post(Protocol.Tls);
+          post(Protocol.Tls, postRepetitions);
           break;
 
         // post for all selected protocols
-        case 'p':
-          for (Protocol p : protocols) {
-            post(p);
+        case 'p': {
+          for (int i = 0; i < postRepetitions; i++) {
+            for (Protocol p : protocols) {
+              post(p, 1);
+            }
           }
           break;
+        }
+
+        case 'P': {
+          for (int i = 0; i < postRepetitions; i++) {
+            for (Protocol p : protocols) {
+              p.reset();
+              post(p, 1);
+            }
+          }
+          break;
+        }
+
+        case 'r': {
+          for (Protocol p : protocols) {
+            p.reset();
+          }
+          break;
+        }
 
         case 'e':
           experiment = new Experiment();
@@ -334,6 +370,8 @@ public class Client {
     System.out.println("t: post via TCP");
     System.out.println("T: post via TLS");
     System.out.println("p: post via all selected protocols");
+    System.out.println("P: reset and post via all selected protocols");
+    System.out.println("r: reset all selected protocols");
     System.out.println("");
     System.out.println("e: start a new experiment");
     System.out.println("n<digits*>: set number of post repetitions");
