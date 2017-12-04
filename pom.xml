@@ -12,7 +12,7 @@
   <name>Transport-Test :: Parent</name>
 
   <properties>
-    <cf.version>2.0.0-M5</cf.version>
+    <cf.version>2.0.0-SNAPSHOT</cf.version>
     <maven.compiler.source>1.8</maven.compiler.source>
     <maven.compiler.target>1.8</maven.compiler.target>
   </properties>
@@ -42,6 +42,11 @@
       <dependency>
         <groupId>org.eclipse.californium</groupId>
         <artifactId>californium-core</artifactId>
+        <version>${cf.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.eclipse.californium</groupId>
+        <artifactId>element-connector-tcp</artifactId>
         <version>${cf.version}</version>
       </dependency>
       <dependency>

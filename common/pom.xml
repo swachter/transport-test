@@ -23,6 +23,11 @@
     </dependency>
     <dependency>
       <groupId>org.eclipse.californium</groupId>
+      <artifactId>element-connector-tcp</artifactId>
+    </dependency>
+
+    <dependency>
+      <groupId>org.eclipse.californium</groupId>
       <artifactId>demo-certs</artifactId>
     </dependency>
 

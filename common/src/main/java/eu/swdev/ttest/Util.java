@@ -1,5 +1,6 @@
 package eu.swdev.ttest;
 
+import org.eclipse.californium.elements.tcp.TcpClientConnector;
 import org.eclipse.californium.elements.tcp.TlsClientConnector;
 import org.eclipse.californium.elements.tcp.TlsServerConnector;
 import org.eclipse.californium.elements.util.SslContextUtil;
@@ -78,6 +79,11 @@ public class Util {
       throw new RuntimeException(e);
     }
   }
+
+  public static TcpClientConnector createTcpClientConnector() {
+    return new TcpClientConnector(2, 5000, 10000);
+  }
+
 
   public static TlsClientConnector createTlsClientConnector() {
     SSLContext sslContext = createSslContext("client");

@@ -7,6 +7,7 @@ import org.eclipse.californium.core.CoapResponse;
 import org.eclipse.californium.core.coap.CoAP;
 import org.eclipse.californium.core.network.CoapEndpoint;
 import org.eclipse.californium.core.network.config.NetworkConfig;
+import org.eclipse.californium.elements.tcp.TcpClientConnector;
 import org.eclipse.californium.scandium.DTLSConnector;
 
 import java.io.PushbackInputStream;
@@ -85,6 +86,7 @@ public class Client {
         't',
         new CoapClient("coap+tcp", host, 5685, "tcp")
             .useNONs()
+            .setEndpoint(new CoapEndpoint(Util.createTcpClientConnector(), networkConfig))
     ),
     Tls(
         'T',
@@ -109,6 +111,7 @@ public class Client {
           System.out.println(response.getCode());
           System.out.println(response.getOptions());
           System.out.println(response.getResponseText());
+          System.out.println(response.advanced().getRTT());
           if (response.getCode().codeClass == CoAP.CodeClass.SUCCESS_RESPONSE.value) {
             return PostResult.Success;
           } else {

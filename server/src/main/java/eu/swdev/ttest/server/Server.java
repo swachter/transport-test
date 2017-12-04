@@ -50,41 +50,14 @@ public class Server extends CoapServer {
       // only binds to IPv4 addresses and localhost
       if (addr instanceof Inet4Address || addr.isLoopbackAddress()) {
         InetSocketAddress udpBindAddress = new InetSocketAddress(addr, COAP_PORT);
-        addEndpoint(new CoapEndpoint(udpBindAddress) {
-          @Override
-          public URI getUri() {
-            try {
-              return super.getUri();
-            } catch (Exception e) {
-              return null;
-            }
-          }
-        });
+        addEndpoint(new CoapEndpoint(udpBindAddress));
         if (!(addr instanceof Inet6Address)) {
           InetSocketAddress tcpBindAddress = new InetSocketAddress(addr, 5685);
-          addEndpoint(new CoapEndpoint(new TcpServerConnector(tcpBindAddress, 2, 10000), networkConfig) {
-            @Override
-            public URI getUri() {
-              try {
-                return super.getUri();
-              } catch (Exception e) {
-                return null;
-              }
-            }
-          });
+          addEndpoint(new CoapEndpoint(new TcpServerConnector(tcpBindAddress, 2, 10000), networkConfig));
         }
       }
       InetSocketAddress dtlsBindAddress = new InetSocketAddress(addr, 5684);
-      addEndpoint(new CoapEndpoint(Util.createDtlsConnector("server", dtlsBindAddress), networkConfig) {
-        @Override
-        public URI getUri() {
-          try {
-            return super.getUri();
-          } catch (Exception e) {
-            return null;
-          }
-        }
-      });
+      addEndpoint(new CoapEndpoint(Util.createDtlsConnector("server", dtlsBindAddress), networkConfig));
 
     }
     addEndpoint(new CoapEndpoint(Util.createTlsServerConnector(5686), networkConfig));
