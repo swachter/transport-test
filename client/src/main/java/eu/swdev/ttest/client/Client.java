@@ -75,11 +75,10 @@ public class Client {
   }
 
   private static void printResponse(String headline, CoapResponse response) {
-    System.out.println(headline);
-    System.out.println("code   : " + response.getCode());
-    System.out.println("options: " + response.getOptions());
-    System.out.println("text   : " + response.getResponseText());
-    System.out.println("RTT    : " + response.advanced().getRTT() + "ms");
+    System.out.println(headline + " - RTT: " + response.advanced().getRTT() + "ms");
+    //System.out.println("code   : " + response.getCode());
+    //System.out.println("options: " + response.getOptions());
+    //System.out.println("text   : " + response.getResponseText());
   }
 
   private enum Protocol {
@@ -203,7 +202,15 @@ public class Client {
 
   Experiment experiment = new Experiment();
 
+  boolean postNotWarmUpRepetitions = true;
   int postRepetitions = 1;
+  int warmUpRepetitions = 0;
+
+  void warmUp(Protocol protocol, int repetitions) throws Exception {
+    for (int i = 0; i < repetitions; i++) {
+      protocol.post(experiment.number, -1);
+    }
+  }
 
   void post(Protocol protocol, int repetitions) throws Exception {
     Stats stats = experiment.getStats(protocol);
@@ -215,8 +222,14 @@ public class Client {
     }
   }
 
+  void warmUpAndPost(Protocol protocol) throws Exception {
+    warmUp(protocol, warmUpRepetitions);
+    post(protocol, postRepetitions);
+  }
+
   Set<Protocol> protocols = new LinkedHashSet<Protocol>() {{
-    for (Protocol p : Protocol.values()) add(p);
+    add(Protocol.Dtls);
+    add(Protocol.Tls);
   }};
 
   void showStats(Protocol protocol) {
@@ -227,8 +240,16 @@ public class Client {
       PostResult postResult = me.getKey();
       Histogram histogram = me.getValue();
       System.out.println("" + postResult + " - count: " + histogram.getTotalCount() +
-          "; maxDuration: " + histogram.getMaxValue() + "; avg: " + histogram.getValueAtPercentile(0.5) + "; " +
-          "; p95: " + histogram.getValueAtPercentile(0.95));
+          "; min: " + histogram.getMinValue() +
+          "; max: " + histogram.getMaxValue() +
+          "; mean: " + histogram.getMean() + "; " +
+          "; stdDeviation: " + histogram.getStdDeviation() +
+          "; p25: " + histogram.getValueAtPercentile(25) +
+          "; p50: " + histogram.getValueAtPercentile(50) +
+          "; p75: " + histogram.getValueAtPercentile(75) +
+          "; p90: " + histogram.getValueAtPercentile(90) +
+          "; p95: " + histogram.getValueAtPercentile(95) +
+          "; p98: " + histogram.getValueAtPercentile(98));
     }
   }
 
@@ -239,35 +260,52 @@ public class Client {
 
       switch (r) {
         case 'u':
-          post(Protocol.Udp, postRepetitions);
+          warmUpAndPost(Protocol.Udp);
           break;
         case 'U':
-          post(Protocol.Dtls, postRepetitions);
+          warmUpAndPost(Protocol.Dtls);
           break;
         case 't':
-          post(Protocol.Tcp, postRepetitions);
+          warmUpAndPost(Protocol.Tcp);
           break;
         case 'T':
-          post(Protocol.Tls, postRepetitions);
+          warmUpAndPost(Protocol.Tls);
           break;
 
         // post for all selected protocols
         case 'p': {
+          System.out.println("begin warmup");
+          for (int i = 0; i < warmUpRepetitions; i++) {
+            for (Protocol p : protocols) {
+              warmUp(p, 1);
+            }
+          }
+          System.out.println("end warmup");
           for (int i = 0; i < postRepetitions; i++) {
             for (Protocol p : protocols) {
               post(p, 1);
             }
           }
+          System.out.println("finished");
           break;
         }
 
         case 'P': {
+          System.out.println("begin warmup");
+          for (int i = 0; i < warmUpRepetitions; i++) {
+            for (Protocol p : protocols) {
+              p.reset();
+              warmUp(p, 1);
+            }
+          }
+          System.out.println("end warmup");
           for (int i = 0; i < postRepetitions; i++) {
             for (Protocol p : protocols) {
               p.reset();
               post(p, 1);
             }
           }
+          System.out.println("finished");
           break;
         }
 
@@ -322,6 +360,12 @@ public class Client {
 
         case 'n':
           postRepetitions = 0;
+          postNotWarmUpRepetitions = true;
+          break;
+
+        case 'w':
+          warmUpRepetitions = 0;
+          postNotWarmUpRepetitions = false;
           break;
 
         case '0':
@@ -334,7 +378,11 @@ public class Client {
         case '7':
         case '8':
         case '9':
-          postRepetitions = postRepetitions * 10 + (r - '0');
+          if (postNotWarmUpRepetitions) {
+            postRepetitions = postRepetitions * 10 + (r - '0');
+          } else {
+            warmUpRepetitions = warmUpRepetitions * 10 + (r - '0');
+          }
           break;
 
         // remove a protocol
@@ -366,7 +414,7 @@ public class Client {
           break;
 
         case 'i':
-          System.out.println("experiment: " + experiment.number + "; protocols: " + protocols + "; handshake: " + dtlsSecurity.handshake + "; postRepetitions: " + postRepetitions);
+          System.out.println("experiment: " + experiment.number + "; protocols: " + protocols + "; handshake: " + dtlsSecurity.handshake + "; postRepetitions: " + postRepetitions + "; warmUpRepetitions: " + warmUpRepetitions);
           break;
 
         case 'q':
@@ -393,7 +441,7 @@ public class Client {
     System.out.println("p: post via all selected protocols");
     System.out.println("P: reset and post via all selected protocols");
     System.out.println("r: reset all selected protocols");
-    System.out.println("h<p|r|x>: set handshake (PSK, RPK, or X.509");
+    System.out.println("h<p|r|x>: set handshake (PSK, RPK, or X.509)");
     System.out.println("");
     System.out.println("e: start a new experiment");
     System.out.println("n<digits*>: set number of post repetitions");

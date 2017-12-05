@@ -6,6 +6,7 @@ import org.eclipse.californium.elements.tcp.TlsServerConnector;
 import org.eclipse.californium.elements.util.SslContextUtil;
 import org.eclipse.californium.scandium.DTLSConnector;
 import org.eclipse.californium.scandium.config.DtlsConnectorConfig;
+import org.eclipse.californium.scandium.dtls.cipher.CipherSuite;
 import org.eclipse.californium.scandium.dtls.pskstore.InMemoryPskStore;
 
 import javax.net.ssl.SSLContext;
@@ -57,6 +58,7 @@ public class Util {
         builder.setIdentity((PrivateKey) keyStore.getKey(security.alias, KEY_STORE_PASSWORD.toCharArray()),
             keyStore.getCertificateChain(security.alias), security.handshake == Handshake.RPK);
         builder.setTrustStore(trustedCertificates);
+        //builder.setSupportedCipherSuites(new CipherSuite[] {CipherSuite.TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA256});
       }
       return new DTLSConnector(builder.build());
     } catch (Exception e) {

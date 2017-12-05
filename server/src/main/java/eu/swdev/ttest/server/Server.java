@@ -104,12 +104,15 @@ public class Server extends CoapServer {
         int idx = text.indexOf(':');
         int experiment = Integer.parseInt(text.substring(0, idx));
         int request = Integer.parseInt(text.substring(idx + 1));
-        Set<Integer> set = sets.get(experiment);
-        if (set == null) {
-          set = new HashSet<>();
-          sets.put(experiment, set);
+        if (request >= 0) {
+          // it is not a warmup request
+          Set<Integer> set = sets.get(experiment);
+          if (set == null) {
+            set = new HashSet<>();
+            sets.put(experiment, set);
+          }
+          set.add(request);
         }
-        set.add(request);
       }
       exchange.respond(CoAP.ResponseCode.CREATED);
     }
