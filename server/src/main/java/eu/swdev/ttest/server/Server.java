@@ -29,7 +29,7 @@ public class Server extends CoapServer {
 
   private static final int COAP_PORT = networkConfig.getInt(NetworkConfig.Keys.COAP_PORT);
 
-  private static String longPayload = RandomStringUtils.randomAlphabetic(50000);
+  private static String longPayload = RandomStringUtils.randomAlphabetic(100000);
 
   //
   //
@@ -47,12 +47,12 @@ public class Server extends CoapServer {
     add(new TestResource("dtls+x509"));
     add(new TestResource("tcp"));
     add(new TestResource("tls"));
-    add(new LongPayloadResource("udp:longPayload"));
-    add(new LongPayloadResource("dtls+psk:longPayload"));
-    add(new LongPayloadResource("dtls+rpk:longPayload"));
-    add(new LongPayloadResource("dtls+x509:longPayload"));
-    add(new LongPayloadResource("tcp:longPayload"));
-    add(new LongPayloadResource("tls:longPayload"));
+    add(new LongPayloadResource("udplongPayload"));
+    add(new LongPayloadResource("dtls+psklongPayload"));
+    add(new LongPayloadResource("dtls+rpklongPayload"));
+    add(new LongPayloadResource("dtls+x509longPayload"));
+    add(new LongPayloadResource("tcplongPayload"));
+    add(new LongPayloadResource("tlslongPayload"));
   }
 
   /**
@@ -119,7 +119,7 @@ public class Server extends CoapServer {
         while (idx2 < text.length() && (Character.isDigit(text.charAt(idx2)) || text.charAt(idx2) == '-')) idx2++;
         int request = Integer.parseInt(text.substring(idx + 1, idx2));
         if (request >= 0) {
-          // it is not a warmup request
+          // it is not a warm up request
           Set<Integer> set = sets.get(experiment);
           if (set == null) {
             set = new HashSet<>();
@@ -128,6 +128,7 @@ public class Server extends CoapServer {
           set.add(request);
         }
       }
+      // echo the request text
       exchange.respond(CoAP.ResponseCode.CREATED, text);
     }
 

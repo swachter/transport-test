@@ -18,7 +18,6 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BiConsumer;
-import java.util.function.BiFunction;
 import java.util.function.Function;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -34,6 +33,9 @@ public class Client {
     Null, Success, Failure, Exception;
   }
 
+  /**
+   * Subclass CoapClient in order to trigger forceResumeAllSession after 30 secs of inactivity.
+   */
   private static class DtlsCoapClient extends CoapClient {
 
     private final AtomicLong lastAccess = new AtomicLong();
@@ -66,12 +68,15 @@ public class Client {
     }
   }
 
+  //
+  //
+  //
+
   private static CoapClient createDtlsCoapClient(DtlsSecurity dtlsSecurity, String path) {
     DTLSConnector connector = Util.createDtlsConnector(new InetSocketAddress(0), dtlsSecurity);
     return new DtlsCoapClient(connector, "coaps", host, 5684, path)
         .useNONs()
-        .setEndpoint(new CoapEndpoint(connector, networkConfig))
-        .setTimeout(10000);
+        .setEndpoint(new CoapEndpoint(connector, networkConfig));
   }
 
   private static void printResponse(String headline, CoapResponse response) {
@@ -81,13 +86,13 @@ public class Client {
     //System.out.println("text   : " + response.getResponseText());
   }
 
-  private static boolean useLongPayload = false;
-  private static String longPayload = RandomStringUtils.randomAlphabetic(500);
+  private static boolean postMorePayload = false;
+  private static String morePayload = RandomStringUtils.randomAlphabetic(500);
 
 
   private enum Protocol {
 
-    Udp("coap", path -> new CoapClient(path, host, 5683, "udp")
+    Udp("udp", path -> new CoapClient("coap", host, 5683, path)
         .useNONs()
     ),
     DtlsPsk("dtls+psk", path -> createDtlsCoapClient(DtlsSecurity.CLIENT_PSK, path)
@@ -97,11 +102,9 @@ public class Client {
     DtlsX509("dtls+x509", path -> createDtlsCoapClient(DtlsSecurity.CLIENT_X509, path)
     ),
     Tcp("tcp", path -> new CoapClient("coap+tcp", host, 5685, path)
-        .useNONs()
         .setEndpoint(new CoapEndpoint(Util.createTcpClientConnector(), networkConfig))
     ),
     Tls("tls", path -> new CoapClient("coaps+tcp", host, 5686, path)
-        .useNONs()
         .setEndpoint(new CoapEndpoint(Util.createTlsClientConnector(), networkConfig))
     );
 
@@ -119,8 +122,8 @@ public class Client {
     public Result post(int experiment, int request) {
       try {
         String payload;
-        if (useLongPayload) {
-          payload = "" + experiment + ":" + request + "\n" + longPayload;
+        if (postMorePayload) {
+          payload = "" + experiment + ":" + request + "\n" + morePayload;
         } else {
           payload = "" + experiment + ":" + request;
         }
@@ -165,7 +168,7 @@ public class Client {
       try {
         CoapResponse response = longPayloadClient.get();
         if (response != null) {
-          printResponse("get long payload response (" + this + ")", response);
+          printResponse("long payload response (" + this + ")", response);
           if (response.getResponseText() != null) {
             System.out.println("response length: " + response.getResponseText().length());
           } else {
@@ -177,7 +180,7 @@ public class Client {
             return Result.Failure;
           }
         } else {
-          System.out.println("no get long payload response received (" + this + ")");
+          System.out.println("no long payload response received (" + this + ")");
           return Result.Null;
         }
       } catch (Exception e) {
@@ -202,10 +205,14 @@ public class Client {
     public final void reset() {
       destroyClient(coapClient);
       destroyClient(longPayloadClient);
-      coapClient = coapClientSupplier.apply(path);
-      longPayloadClient = coapClientSupplier.apply(path + ":longPayload");
+      coapClient = coapClientSupplier.apply(path).setTimeout(10000);
+      longPayloadClient = coapClientSupplier.apply(path + "morePayload").setTimeout(180000);
     }
   }
+
+  //
+  //
+  //
 
   static class Stats {
     int requests = 0;
@@ -283,14 +290,10 @@ public class Client {
         long start = System.nanoTime();
         Result result = protocol.getLongPayload();
         long duration = (System.nanoTime() - start + 500000) / 1000000;
+        System.out.println("duration: " + duration);
         stats.getDurations(result).recordValue(duration);
       }
     }
-  }
-
-  void warmUpAndPost(Protocol protocol) throws Exception {
-    post(protocol, warmUpRepetitions, true);
-    post(protocol, requestRepetitions, false);
   }
 
   Set<Protocol> protocols = new LinkedHashSet<Protocol>() {{
@@ -439,7 +442,12 @@ public class Client {
             if (countOnServer == null) {
               System.out.println("countOnServer unknown");
             } else {
-              System.out.println("countOnSever: " + countOnServer + "; ratio: " + countOnServer.doubleValue() / experiment.getPostStats(p).requests);
+              int requests = experiment.getPostStats(p).requests;
+              if (requests != 0) {
+                System.out.println("countOnSever: " + countOnServer + "; ratio: " + countOnServer.doubleValue() / experiment.getPostStats(p).requests);
+              } else {
+                System.out.println("countOnSever: " + countOnServer + "; sentRequests: 0");
+              }
             }
           }
           break;
@@ -455,13 +463,13 @@ public class Client {
           break;
 
         case 'l':
-          System.out.println("use short payload");
-          useLongPayload = false;
+          System.out.println("post small payload");
+          postMorePayload = false;
           break;
 
         case 'L':
-          System.out.println("use long payload");
-          useLongPayload = true;
+          System.out.println("post more payload");
+          postMorePayload = true;
           break;
 
         case '0':
@@ -516,7 +524,7 @@ public class Client {
           break;
 
         case 'i':
-          System.out.println("experiment: " + experiment.number + "; protocols: " + protocols + "; requestRepetitions: " + requestRepetitions + "; warmUpRepetitions: " + warmUpRepetitions + "; useLongPayload: " + useLongPayload);
+          System.out.println("experiment: " + experiment.number + "; protocols: " + protocols + "; requestRepetitions: " + requestRepetitions + "; warmUpRepetitions: " + warmUpRepetitions + "; postMorePayload: " + postMorePayload);
           break;
 
         case 'q':
@@ -547,8 +555,8 @@ public class Client {
     System.out.println("+<protocol>: add a protocol to selection");
     System.out.println("-<protocol>: remove a protocol from selection");
     System.out.println("#: clear protocol selection");
-    System.out.println("l: post short payload");
-    System.out.println("L: post long payload");
+    System.out.println("l: post small payload");
+    System.out.println("L: post more payload");
     System.out.println("");
     System.out.println("s: show current post statistics");
     System.out.println("S: show current post statistics and server counts");
