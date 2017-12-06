@@ -2,6 +2,7 @@ package eu.swdev.ttest.server;
 
 import eu.swdev.ttest.DtlsSecurity;
 import eu.swdev.ttest.Util;
+import org.apache.commons.lang3.RandomStringUtils;
 import org.eclipse.californium.core.CoapResource;
 import org.eclipse.californium.core.CoapServer;
 import org.eclipse.californium.core.coap.CoAP;
@@ -15,6 +16,8 @@ import org.eclipse.californium.elements.tcp.TcpServerConnector;
 import java.net.*;
 import java.util.*;
 
+import static eu.swdev.ttest.Util.networkConfig;
+
 public class Server extends CoapServer {
 
   public static void main(String[] args) throws Exception {
@@ -24,7 +27,9 @@ public class Server extends CoapServer {
 
   }
 
-  private static final int COAP_PORT = NetworkConfig.getStandard().getInt(NetworkConfig.Keys.COAP_PORT);
+  private static final int COAP_PORT = networkConfig.getInt(NetworkConfig.Keys.COAP_PORT);
+
+  private static String longPayload = RandomStringUtils.randomAlphabetic(50000);
 
   //
   //
@@ -37,16 +42,23 @@ public class Server extends CoapServer {
 
   private void addResources() {
     add(new TestResource("udp"));
-    add(new TestResource("dtls"));
+    add(new TestResource("dtls+psk"));
+    add(new TestResource("dtls+rpk"));
+    add(new TestResource("dtls+x509"));
     add(new TestResource("tcp"));
     add(new TestResource("tls"));
+    add(new LongPayloadResource("udp:longPayload"));
+    add(new LongPayloadResource("dtls+psk:longPayload"));
+    add(new LongPayloadResource("dtls+rpk:longPayload"));
+    add(new LongPayloadResource("dtls+x509:longPayload"));
+    add(new LongPayloadResource("tcp:longPayload"));
+    add(new LongPayloadResource("tls:longPayload"));
   }
 
   /**
    * Add individual endpoints listening on default CoAP port on all IPv4 addresses of all network interfaces.
    */
   private void addEndpoints() throws Exception {
-    NetworkConfig networkConfig = NetworkConfig.createStandardWithoutFile();
     for (InetAddress addr : EndpointManager.getEndpointManager().getNetworkInterfaces()) {
       // only binds to IPv4 addresses and localhost
       if (addr instanceof Inet4Address || addr.isLoopbackAddress()) {
@@ -99,11 +111,13 @@ public class Server extends CoapServer {
 
     @Override
     public void handlePOST(CoapExchange exchange) {
+      String text = exchange.getRequestText();
       synchronized (sets) {
-        String text = exchange.getRequestText();
         int idx = text.indexOf(':');
         int experiment = Integer.parseInt(text.substring(0, idx));
-        int request = Integer.parseInt(text.substring(idx + 1));
+        int idx2 = idx + 1;
+        while (idx2 < text.length() && (Character.isDigit(text.charAt(idx2)) || text.charAt(idx2) == '-')) idx2++;
+        int request = Integer.parseInt(text.substring(idx + 1, idx2));
         if (request >= 0) {
           // it is not a warmup request
           Set<Integer> set = sets.get(experiment);
@@ -114,7 +128,20 @@ public class Server extends CoapServer {
           set.add(request);
         }
       }
-      exchange.respond(CoAP.ResponseCode.CREATED);
+      exchange.respond(CoAP.ResponseCode.CREATED, text);
+    }
+
+  }
+
+  public class LongPayloadResource extends CoapResource {
+
+    public LongPayloadResource(String name) {
+      super(name);
+    }
+
+    @Override
+    public void handleGET(CoapExchange exchange) {
+      exchange.respond(longPayload);
     }
 
   }

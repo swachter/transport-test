@@ -3,11 +3,11 @@ package eu.swdev.ttest.client;
 import eu.swdev.ttest.DtlsSecurity;
 import eu.swdev.ttest.Util;
 import org.HdrHistogram.Histogram;
+import org.apache.commons.lang3.RandomStringUtils;
 import org.eclipse.californium.core.CoapClient;
 import org.eclipse.californium.core.CoapResponse;
 import org.eclipse.californium.core.coap.CoAP;
 import org.eclipse.californium.core.network.CoapEndpoint;
-import org.eclipse.californium.core.network.config.NetworkConfig;
 import org.eclipse.californium.scandium.DTLSConnector;
 
 import java.io.PushbackInputStream;
@@ -17,20 +17,22 @@ import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.function.Supplier;
+import java.util.function.BiConsumer;
+import java.util.function.BiFunction;
+import java.util.function.Function;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+
+import static eu.swdev.ttest.Util.networkConfig;
 
 public class Client {
 
   public static final boolean remoteHost = System.getProperty("remote") != null;
   public static final String host = System.getProperty("host", remoteHost ? "swachter.p7.de" : "localhost");
 
-  private enum PostResult {
+  private enum Result {
     Null, Success, Failure, Exception;
   }
-
-  private static NetworkConfig networkConfig = NetworkConfig.createStandardWithoutFile();
 
   private static class DtlsCoapClient extends CoapClient {
 
@@ -64,11 +66,9 @@ public class Client {
     }
   }
 
-  private static DtlsSecurity dtlsSecurity = DtlsSecurity.CLIENT_PSK;
-
-  private static CoapClient createDtlsCoapClient() {
+  private static CoapClient createDtlsCoapClient(DtlsSecurity dtlsSecurity, String path) {
     DTLSConnector connector = Util.createDtlsConnector(new InetSocketAddress(0), dtlsSecurity);
-    return new DtlsCoapClient(connector, "coaps", host, 5684, "dtls")
+    return new DtlsCoapClient(connector, "coaps", host, 5684, path)
         .useNONs()
         .setEndpoint(new CoapEndpoint(connector, networkConfig))
         .setTimeout(10000);
@@ -81,58 +81,64 @@ public class Client {
     //System.out.println("text   : " + response.getResponseText());
   }
 
+  private static boolean useLongPayload = false;
+  private static String longPayload = RandomStringUtils.randomAlphabetic(500);
+
+
   private enum Protocol {
 
-    Udp(
-        'u',
-        () -> new CoapClient("coap", host, 5683, "udp")
-            .useNONs()
+    Udp("coap", path -> new CoapClient(path, host, 5683, "udp")
+        .useNONs()
     ),
-    Dtls(
-        'U',
-        () -> createDtlsCoapClient()
+    DtlsPsk("dtls+psk", path -> createDtlsCoapClient(DtlsSecurity.CLIENT_PSK, path)
     ),
-    Tcp(
-        't',
-        () -> new CoapClient("coap+tcp", host, 5685, "tcp")
-            .useNONs()
-            .setEndpoint(new CoapEndpoint(Util.createTcpClientConnector(), networkConfig))
+    DtlsRpk("dtls+rpk", path -> createDtlsCoapClient(DtlsSecurity.CLIENT_RPK, path)
     ),
-    Tls(
-        'T',
-        () -> new CoapClient("coaps+tcp", host, 5686, "tls")
-            .useNONs()
-            .setEndpoint(new CoapEndpoint(Util.createTlsClientConnector(), networkConfig))
+    DtlsX509("dtls+x509", path -> createDtlsCoapClient(DtlsSecurity.CLIENT_X509, path)
+    ),
+    Tcp("tcp", path -> new CoapClient("coap+tcp", host, 5685, path)
+        .useNONs()
+        .setEndpoint(new CoapEndpoint(Util.createTcpClientConnector(), networkConfig))
+    ),
+    Tls("tls", path -> new CoapClient("coaps+tcp", host, 5686, path)
+        .useNONs()
+        .setEndpoint(new CoapEndpoint(Util.createTlsClientConnector(), networkConfig))
     );
 
-    private final char key;
-    private final Supplier<CoapClient> coapClientSupplier;
+    private final String path;
+    private final Function<String, CoapClient> coapClientSupplier;
     private CoapClient coapClient;
+    private CoapClient longPayloadClient;
 
-
-    Protocol(char key, Supplier<CoapClient> coapClientSupplier) {
-      this.key = key;
+    Protocol(String path, Function<String, CoapClient> coapClientSupplier) {
+      this.path = path;
       this.coapClientSupplier = coapClientSupplier;
-      coapClient = coapClientSupplier.get();
+      reset();
     }
 
-    public PostResult post(int experiment, int request) {
+    public Result post(int experiment, int request) {
       try {
-        CoapResponse response = coapClient.post("" + experiment + ":" + request, 0);
+        String payload;
+        if (useLongPayload) {
+          payload = "" + experiment + ":" + request + "\n" + longPayload;
+        } else {
+          payload = "" + experiment + ":" + request;
+        }
+        CoapResponse response = coapClient.post(payload, 0);
         if (response != null) {
           printResponse("post response (" + this + ")", response);
           if (response.getCode().codeClass == CoAP.CodeClass.SUCCESS_RESPONSE.value) {
-            return PostResult.Success;
+            return Result.Success;
           } else {
-            return PostResult.Failure;
+            return Result.Failure;
           }
         } else {
           System.out.println("no post response received (" + this + ")");
-          return PostResult.Null;
+          return Result.Null;
         }
       } catch (Exception e) {
         e.printStackTrace();
-        return PostResult.Exception;
+        return Result.Exception;
       }
     }
 
@@ -155,28 +161,61 @@ public class Client {
       }
     }
 
-    public void reset() throws Exception {
-      // UDP-CoapClient uses default endpoint
-      // -> do not reset endpoint (UDP is sessionless anyway)
-      if (coapClient.getEndpoint() == null) {
-        System.out.println("can not reset protocol: " + this);
-        return;
+    public Result getLongPayload() {
+      try {
+        CoapResponse response = longPayloadClient.get();
+        if (response != null) {
+          printResponse("get long payload response (" + this + ")", response);
+          if (response.getResponseText() != null) {
+            System.out.println("response length: " + response.getResponseText().length());
+          } else {
+            System.out.println("no response text found");
+          }
+          if (response.getCode().codeClass == CoAP.CodeClass.SUCCESS_RESPONSE.value) {
+            return Result.Success;
+          } else {
+            return Result.Failure;
+          }
+        } else {
+          System.out.println("no get long payload response received (" + this + ")");
+          return Result.Null;
+        }
+      } catch (Exception e) {
+        e.printStackTrace();
+        return Result.Exception;
       }
-      coapClient.shutdown();
-      coapClient.getEndpoint().destroy();
-      coapClient = coapClientSupplier.get();
+    }
+
+    private void destroyClient(CoapClient client) {
+      if (client != null) {
+        // UDP-CoapClient uses default endpoint
+        // -> do not reset endpoint (UDP is sessionless anyway)
+        if (client.getEndpoint() == null) {
+          System.out.println("can not reset protocol: " + this);
+          return;
+        }
+        client.shutdown();
+        client.getEndpoint().destroy();
+      }
+    }
+
+    public final void reset() {
+      destroyClient(coapClient);
+      destroyClient(longPayloadClient);
+      coapClient = coapClientSupplier.apply(path);
+      longPayloadClient = coapClientSupplier.apply(path + ":longPayload");
     }
   }
 
   static class Stats {
     int requests = 0;
-    Map<PostResult, Histogram> durations = new HashMap<>();
+    Map<Result, Histogram> durations = new HashMap<>();
 
-    Histogram getDurations(PostResult postResult) {
-      Histogram h = durations.get(postResult);
+    Histogram getDurations(Result result) {
+      Histogram h = durations.get(result);
       if (h == null) {
         h = new Histogram(5);
-        durations.put(postResult, h);
+        durations.put(result, h);
       }
       return h;
     }
@@ -187,12 +226,22 @@ public class Client {
   static class Experiment {
     final int number = experimentCounter++;
     final Map<Protocol, Stats> stats = new HashMap<>();
+    final Map<Protocol, Stats> longPayloadStats = new HashMap<>();
 
-    Stats getStats(Protocol protocol) {
+    Stats getPostStats(Protocol protocol) {
       Stats s = stats.get(protocol);
       if (s == null) {
         s = new Stats();
         stats.put(protocol, s);
+      }
+      return s;
+    }
+
+    Stats getLongPayloadStats(Protocol protocol) {
+      Stats s = longPayloadStats.get(protocol);
+      if (s == null) {
+        s = new Stats();
+        longPayloadStats.put(protocol, s);
       }
       return s;
     }
@@ -202,44 +251,59 @@ public class Client {
 
   Experiment experiment = new Experiment();
 
-  boolean postNotWarmUpRepetitions = true;
-  int postRepetitions = 1;
+  boolean requestNotWarmUpRepetitions = true;
+  int requestRepetitions = 1;
   int warmUpRepetitions = 0;
 
-  void warmUp(Protocol protocol, int repetitions) throws Exception {
-    for (int i = 0; i < repetitions; i++) {
-      protocol.post(experiment.number, -1);
+  void post(Protocol protocol, int repetitions, boolean isWarmUp) {
+    if (isWarmUp) {
+      for (int i = 0; i < repetitions; i++) {
+        protocol.post(experiment.number, -1);
+      }
+    } else {
+      Stats stats = experiment.getPostStats(protocol);
+      for (int i = 0; i < repetitions; i++) {
+        long start = System.nanoTime();
+        Result result = protocol.post(experiment.number, stats.requests++);
+        long duration = (System.nanoTime() - start + 500000) / 1000000;
+        stats.getDurations(result).recordValue(duration);
+      }
     }
   }
 
-  void post(Protocol protocol, int repetitions) throws Exception {
-    Stats stats = experiment.getStats(protocol);
-    for (int i = 0; i < repetitions; i++) {
-      long start = System.nanoTime();
-      PostResult postResult = protocol.post(experiment.number, stats.requests++);
-      long duration = (System.nanoTime() - start + 500000) / 1000000;
-      stats.getDurations(postResult).recordValue(duration);
+  void getLongPayload(Protocol protocol, int repetitions, boolean isWarmUp) {
+    if (isWarmUp) {
+      for (int i = 0; i < repetitions; i++) {
+        protocol.getLongPayload();
+      }
+    } else {
+      Stats stats = experiment.getLongPayloadStats(protocol);
+      for (int i = 0; i < repetitions; i++) {
+        stats.requests++;
+        long start = System.nanoTime();
+        Result result = protocol.getLongPayload();
+        long duration = (System.nanoTime() - start + 500000) / 1000000;
+        stats.getDurations(result).recordValue(duration);
+      }
     }
   }
 
   void warmUpAndPost(Protocol protocol) throws Exception {
-    warmUp(protocol, warmUpRepetitions);
-    post(protocol, postRepetitions);
+    post(protocol, warmUpRepetitions, true);
+    post(protocol, requestRepetitions, false);
   }
 
   Set<Protocol> protocols = new LinkedHashSet<Protocol>() {{
-    add(Protocol.Dtls);
+    add(Protocol.DtlsPsk);
     add(Protocol.Tls);
   }};
 
-  void showStats(Protocol protocol) {
-    System.out.println("==> Stats (" + protocol + ")");
-    Stats stats = experiment.getStats(protocol);
+  void showStats(Stats stats) {
     System.out.println("posted requests: " + stats.requests);
-    for (Map.Entry<PostResult, Histogram> me : stats.durations.entrySet()) {
-      PostResult postResult = me.getKey();
+    for (Map.Entry<Result, Histogram> me : stats.durations.entrySet()) {
+      Result result = me.getKey();
       Histogram histogram = me.getValue();
-      System.out.println("" + postResult + " - count: " + histogram.getTotalCount() +
+      System.out.println("" + result + " - count: " + histogram.getTotalCount() +
           "; min: " + histogram.getMinValue() +
           "; max: " + histogram.getMaxValue() +
           "; mean: " + histogram.getMean() + "; " +
@@ -253,61 +317,102 @@ public class Client {
     }
   }
 
+  void showProtocolStats(Protocol protocol) {
+    System.out.println("==> Stats (" + protocol + ")");
+    showStats(experiment.getPostStats(protocol));
+    showStats(experiment.getLongPayloadStats(protocol));
+  }
+
+  Protocol inputProtocol() throws Exception {
+
+    int r;
+    if ((r = keyboardInput.read()) != -1) {
+      switch (r) {
+
+        case 't':
+          return Protocol.Tcp;
+        case 'T':
+          return Protocol.Tls;
+        case 'u':
+          return Protocol.Udp;
+        case 'U':
+          return Protocol.DtlsPsk;
+        case 'd':
+          if ((r = keyboardInput.read()) != -1) {
+            switch (r) {
+              case 'p':
+                return Protocol.DtlsPsk;
+              case 'r':
+                return Protocol.DtlsRpk;
+              case 'x':
+                return Protocol.DtlsX509;
+              default:
+                System.out.println("unknown handshake '" + (char) r + "'; use p (for psk), r (for rpk), or x for (x.509)");
+                return null;
+            }
+          } else {
+            return null;
+          }
+        default:
+          System.out.println("unknown protocol '" + (char) r + "'; use t (for TCP), T (for tls), u (for UDP), U (for DTLS with PSK), d (for DTLS with handshake psk, rpk, or X.509))");
+          return null;
+      }
+    } else {
+      return null;
+    }
+
+  }
+
+  void doWithWarmUp(BiConsumer<Protocol, Boolean> func) {
+    if (warmUpRepetitions > 0) System.out.println("begin warmup");
+    for (int i = 0; i < warmUpRepetitions; i++) {
+      for (Protocol p : protocols) {
+        func.accept(p, true);
+      }
+    }
+    if (warmUpRepetitions > 0) {
+      System.out.println("end warmup");
+    } else {
+      System.out.println("start");
+    }
+    for (int i = 0; i < requestRepetitions; i++) {
+      for (Protocol p : protocols) {
+        func.accept(p, false);
+      }
+    }
+    System.out.println("finished");
+
+  }
+
   void repl() throws Exception {
     int r;
 
     while ((r = keyboardInput.read()) != -1) {
 
       switch (r) {
-        case 'u':
-          warmUpAndPost(Protocol.Udp);
-          break;
-        case 'U':
-          warmUpAndPost(Protocol.Dtls);
-          break;
-        case 't':
-          warmUpAndPost(Protocol.Tcp);
-          break;
-        case 'T':
-          warmUpAndPost(Protocol.Tls);
-          break;
 
         // post for all selected protocols
-        case 'p': {
-          System.out.println("begin warmup");
-          for (int i = 0; i < warmUpRepetitions; i++) {
-            for (Protocol p : protocols) {
-              warmUp(p, 1);
-            }
-          }
-          System.out.println("end warmup");
-          for (int i = 0; i < postRepetitions; i++) {
-            for (Protocol p : protocols) {
-              post(p, 1);
-            }
-          }
-          System.out.println("finished");
+        case 'p':
+          doWithWarmUp((protocol, warmUp) -> post(protocol, 1, warmUp));
           break;
-        }
 
-        case 'P': {
-          System.out.println("begin warmup");
-          for (int i = 0; i < warmUpRepetitions; i++) {
-            for (Protocol p : protocols) {
-              p.reset();
-              warmUp(p, 1);
-            }
-          }
-          System.out.println("end warmup");
-          for (int i = 0; i < postRepetitions; i++) {
-            for (Protocol p : protocols) {
-              p.reset();
-              post(p, 1);
-            }
-          }
-          System.out.println("finished");
+        case 'P':
+          doWithWarmUp((protocol, warmUp) -> {
+            protocol.reset();
+            post(protocol, 1, warmUp);
+          });
           break;
-        }
+
+        case 'g':
+          doWithWarmUp((protocol, warmUp) -> getLongPayload(protocol, 1, warmUp));
+          break;
+
+        case 'G':
+          doWithWarmUp((protocol, warmUp) -> {
+            protocol.reset();
+            getLongPayload(protocol, 1, warmUp);
+          });
+          break;
 
         case 'r': {
           for (Protocol p : protocols) {
@@ -316,25 +421,6 @@ public class Client {
           break;
         }
 
-        case 'h': {
-          if ((r = keyboardInput.read()) != -1) {
-            switch (r) {
-              case 'p':
-                dtlsSecurity = DtlsSecurity.CLIENT_PSK;
-                break;
-              case 'r':
-                dtlsSecurity = DtlsSecurity.CLIENT_RPK;
-                break;
-              case 'x':
-                dtlsSecurity = DtlsSecurity.CLIENT_X509;
-                break;
-              default:
-                System.out.println("unknown handshake '" + (char)r + "'; use p (for psk), r (for rpk), or x for (x.509)");
-                keyboardInput.unread(r);
-            }
-          }
-          break;
-        }
         case 'e':
           experiment = new Experiment();
           System.out.println("start new experiment #" + experiment.number);
@@ -342,30 +428,40 @@ public class Client {
 
         case 's':
           for (Protocol p : protocols) {
-            showStats(p);
+            showProtocolStats(p);
           }
           break;
 
         case 'S':
           for (Protocol p : protocols) {
-            showStats(p);
+            showProtocolStats(p);
             Integer countOnServer = p.get(experiment.number);
             if (countOnServer == null) {
-              System.out.println("countOnServer keyboardInput unknown");
+              System.out.println("countOnServer unknown");
             } else {
-              System.out.println("countOnSever: " + countOnServer + "; ratio: " + countOnServer.doubleValue() / experiment.getStats(p).requests);
+              System.out.println("countOnSever: " + countOnServer + "; ratio: " + countOnServer.doubleValue() / experiment.getPostStats(p).requests);
             }
           }
           break;
 
         case 'n':
-          postRepetitions = 0;
-          postNotWarmUpRepetitions = true;
+          requestRepetitions = 0;
+          requestNotWarmUpRepetitions = true;
           break;
 
         case 'w':
           warmUpRepetitions = 0;
-          postNotWarmUpRepetitions = false;
+          requestNotWarmUpRepetitions = false;
+          break;
+
+        case 'l':
+          System.out.println("use short payload");
+          useLongPayload = false;
+          break;
+
+        case 'L':
+          System.out.println("use long payload");
+          useLongPayload = true;
           break;
 
         case '0':
@@ -378,8 +474,8 @@ public class Client {
         case '7':
         case '8':
         case '9':
-          if (postNotWarmUpRepetitions) {
-            postRepetitions = postRepetitions * 10 + (r - '0');
+          if (requestNotWarmUpRepetitions) {
+            requestRepetitions = requestRepetitions * 10 + (r - '0');
           } else {
             warmUpRepetitions = warmUpRepetitions * 10 + (r - '0');
           }
@@ -387,11 +483,12 @@ public class Client {
 
         // remove a protocol
         case '-': {
-          int i = keyboardInput.read();
-          for (Protocol p : protocols) {
-            if (p.key == (char) i) {
-              protocols.remove(p);
-              break;
+          Protocol p = inputProtocol();
+          if (p != null) {
+            if (protocols.remove(p)) {
+              System.out.println("removed protocol: " + p);
+            } else {
+              System.out.println("protocol was not included: " + p);
             }
           }
         }
@@ -399,22 +496,27 @@ public class Client {
 
         // add a protocol
         case '+': {
-          int i = keyboardInput.read();
-          for (Protocol p : Protocol.values()) {
-            if (p.key == (char) i) {
-              protocols.add(p);
-              break;
+          Protocol p = inputProtocol();
+          if (p != null) {
+            if (protocols.add(p)) {
+              System.out.println("added protocol: " + p);
+            } else {
+              System.out.println("protocol was already added: " + p);
             }
           }
         }
         break;
+
+        case '#':
+          protocols.clear();
+          break;
 
         case '?':
           usage();
           break;
 
         case 'i':
-          System.out.println("experiment: " + experiment.number + "; protocols: " + protocols + "; handshake: " + dtlsSecurity.handshake + "; postRepetitions: " + postRepetitions + "; warmUpRepetitions: " + warmUpRepetitions);
+          System.out.println("experiment: " + experiment.number + "; protocols: " + protocols + "; requestRepetitions: " + requestRepetitions + "; warmUpRepetitions: " + warmUpRepetitions + "; useLongPayload: " + useLongPayload);
           break;
 
         case 'q':
@@ -434,19 +536,19 @@ public class Client {
   }
 
   private static void usage() {
-    System.out.println("u: post via UDP");
-    System.out.println("U: post via DTLS");
-    System.out.println("t: post via TCP");
-    System.out.println("T: post via TLS");
     System.out.println("p: post via all selected protocols");
     System.out.println("P: reset and post via all selected protocols");
+    System.out.println("g: get a large payload via all selected protocols");
+    System.out.println("G: reset and get a large payload via all selected protocols");
     System.out.println("r: reset all selected protocols");
-    System.out.println("h<p|r|x>: set handshake (PSK, RPK, or X.509)");
     System.out.println("");
     System.out.println("e: start a new experiment");
-    System.out.println("n<digits*>: set number of post repetitions");
-    System.out.println("+<u|U|t|T>: add a protocol to selection");
-    System.out.println("-<u|U|t|T>: remove a protocol from selection");
+    System.out.println("n<digits*>: set number of request repetitions");
+    System.out.println("+<protocol>: add a protocol to selection");
+    System.out.println("-<protocol>: remove a protocol from selection");
+    System.out.println("#: clear protocol selection");
+    System.out.println("l: post short payload");
+    System.out.println("L: post long payload");
     System.out.println("");
     System.out.println("s: show current post statistics");
     System.out.println("S: show current post statistics and server counts");
@@ -456,3 +558,8 @@ public class Client {
     System.out.println("q: quit");
   }
 }
+
+/*
+
+
+ */

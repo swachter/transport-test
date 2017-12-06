@@ -1,5 +1,6 @@
 package eu.swdev.ttest;
 
+import org.eclipse.californium.core.network.config.NetworkConfig;
 import org.eclipse.californium.elements.tcp.TcpClientConnector;
 import org.eclipse.californium.elements.tcp.TlsClientConnector;
 import org.eclipse.californium.elements.tcp.TlsServerConnector;
@@ -22,6 +23,11 @@ public class Util {
   private static final String KEY_STORE_LOCATION = "certs/keyStore.jks";
   private static final String TRUST_STORE_PASSWORD = "rootPass";
   private static final String TRUST_STORE_LOCATION = "certs/trustStore.jks";
+
+  public static NetworkConfig networkConfig = NetworkConfig
+      .createStandardWithoutFile()
+      .setInt(NetworkConfig.Keys.MAX_RESOURCE_BODY_SIZE, 500000)
+      .setInt(NetworkConfig.Keys.BLOCKWISE_STATUS_LIFETIME, 5 * 60 * 1000);
 
   public static DTLSConnector createDtlsConnector(InetSocketAddress addr, DtlsSecurity security) {
     DtlsConnectorConfig.Builder builder = new DtlsConnectorConfig.Builder();
