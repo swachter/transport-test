@@ -70,7 +70,7 @@ public class Server extends CoapServer {
         }
       }
       InetSocketAddress dtlsBindAddress = new InetSocketAddress(addr, 5684);
-      addEndpoint(new CoapEndpoint(Util.createDtlsConnector(dtlsBindAddress, DtlsSecurity.SERVER), networkConfig));
+      addEndpoint(new CoapEndpoint(Util.createDtlsServerConnector(dtlsBindAddress), networkConfig));
 
     }
     addEndpoint(new CoapEndpoint(Util.createTlsServerConnector(5686), networkConfig));

@@ -11,6 +11,7 @@ import org.eclipse.californium.core.network.CoapEndpoint;
 import org.eclipse.californium.scandium.DTLSConnector;
 
 import java.io.PushbackInputStream;
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
@@ -27,7 +28,18 @@ import static eu.swdev.ttest.Util.networkConfig;
 public class Client {
 
   public static final boolean remoteHost = System.getProperty("remote") != null;
-  public static final String host = System.getProperty("host", remoteHost ? "swachter.p7.de" : "localhost");
+  public static final String dnsHost = System.getProperty("host", remoteHost ? "swachter.p7.de" : "localhost");
+  public static final String host;
+
+  static {
+    try {
+      InetAddress ia = InetAddress.getByName(dnsHost);
+      host = ia.getHostAddress();
+      System.out.println("resolved ip: " + host);
+    } catch (Exception e) {
+      throw new RuntimeException(e);
+    }
+  }
 
   private enum Result {
     Null, Success, Failure, Exception;
@@ -73,9 +85,8 @@ public class Client {
   //
 
   private static CoapClient createDtlsCoapClient(DtlsSecurity dtlsSecurity, String path) {
-    DTLSConnector connector = Util.createDtlsConnector(new InetSocketAddress(0), dtlsSecurity);
+    DTLSConnector connector = Util.createDtlsClientConnector(new InetSocketAddress(0), dtlsSecurity);
     return new DtlsCoapClient(connector, "coaps", host, 5684, path)
-        .useNONs()
         .setEndpoint(new CoapEndpoint(connector, networkConfig));
   }
 
@@ -89,18 +100,16 @@ public class Client {
   private static boolean postMorePayload = false;
   private static String morePayload = RandomStringUtils.randomAlphabetic(500);
 
+  //
+  //
+  //
 
   private enum Protocol {
 
-    Udp("udp", path -> new CoapClient("coap", host, 5683, path)
-        .useNONs()
-    ),
-    DtlsPsk("dtls+psk", path -> createDtlsCoapClient(DtlsSecurity.CLIENT_PSK, path)
-    ),
-    DtlsRpk("dtls+rpk", path -> createDtlsCoapClient(DtlsSecurity.CLIENT_RPK, path)
-    ),
-    DtlsX509("dtls+x509", path -> createDtlsCoapClient(DtlsSecurity.CLIENT_X509, path)
-    ),
+    Udp("udp", path -> new CoapClient("coap", host, 5683, path)),
+    DtlsPsk("dtls+psk", path -> createDtlsCoapClient(DtlsSecurity.CLIENT_PSK, path)),
+    DtlsRpk("dtls+rpk", path -> createDtlsCoapClient(DtlsSecurity.CLIENT_RPK, path)),
+    DtlsX509("dtls+x509", path -> createDtlsCoapClient(DtlsSecurity.CLIENT_X509, path)),
     Tcp("tcp", path -> new CoapClient("coap+tcp", host, 5685, path)
         .setEndpoint(new CoapEndpoint(Util.createTcpClientConnector(), networkConfig))
     ),
@@ -205,8 +214,8 @@ public class Client {
     public final void reset() {
       destroyClient(coapClient);
       destroyClient(longPayloadClient);
-      coapClient = coapClientSupplier.apply(path).setTimeout(10000);
-      longPayloadClient = coapClientSupplier.apply(path + "morePayload").setTimeout(180000);
+      coapClient = coapClientSupplier.apply(path).setTimeout(10000).useNONs();
+      longPayloadClient = coapClientSupplier.apply(path + "longPayload").setTimeout(180000).useCONs();
     }
   }
 
@@ -366,10 +375,33 @@ public class Client {
 
   }
 
+  boolean checkBreak() {
+    int r;
+    try {
+      if ((r = keyboardInput.read()) != -1) {
+        if (r == 'b') {
+          System.out.println("break");
+          return true;
+        } else {
+          keyboardInput.unread(r);
+          return false;
+        }
+      } else {
+        return false;
+      }
+    } catch (Exception e) {
+      throw new RuntimeException(e);
+    }
+  }
+
   void doWithWarmUp(BiConsumer<Protocol, Boolean> func) {
     if (warmUpRepetitions > 0) System.out.println("begin warmup");
     for (int i = 0; i < warmUpRepetitions; i++) {
+      if (i % 5 == 0) {
+        System.out.println("warmups to do " + (warmUpRepetitions - i));
+      }
       for (Protocol p : protocols) {
+        if (checkBreak()) return;
         func.accept(p, true);
       }
     }
@@ -379,7 +411,11 @@ public class Client {
       System.out.println("start");
     }
     for (int i = 0; i < requestRepetitions; i++) {
+      if (i % 5 == 0) {
+        System.out.println("===> repetitions to do " + (requestRepetitions - i));
+      }
       for (Protocol p : protocols) {
+        if (checkBreak()) return;
         func.accept(p, false);
       }
     }
