@@ -375,33 +375,38 @@ public class Client {
 
   }
 
-  boolean checkBreak() {
-    int r;
+  int cntWhitspace() {
+    int cnt = 0;
     try {
-      if ((r = keyboardInput.read()) != -1) {
-        if (r == 'b') {
-          System.out.println("break");
-          return true;
+      while (keyboardInput.available() > 0) {
+        int r = keyboardInput.read();
+        if (Character.isWhitespace(r)) {
+          cnt++;
         } else {
           keyboardInput.unread(r);
-          return false;
+          break;
         }
-      } else {
-        return false;
       }
+      return cnt;
     } catch (Exception e) {
       throw new RuntimeException(e);
     }
   }
 
   void doWithWarmUp(BiConsumer<Protocol, Boolean> func) {
+    // allow to interrupt loop by hitting <return>
+    int whitespaceCnt = 0;
     if (warmUpRepetitions > 0) System.out.println("begin warmup");
     for (int i = 0; i < warmUpRepetitions; i++) {
       if (i % 5 == 0) {
         System.out.println("warmups to do " + (warmUpRepetitions - i));
       }
       for (Protocol p : protocols) {
-        if (checkBreak()) return;
+        whitespaceCnt += cntWhitspace();
+        if (whitespaceCnt > 1) {
+          System.out.println("break");
+          return;
+        }
         func.accept(p, true);
       }
     }
@@ -415,7 +420,11 @@ public class Client {
         System.out.println("===> repetitions to do " + (requestRepetitions - i));
       }
       for (Protocol p : protocols) {
-        if (checkBreak()) return;
+        whitespaceCnt += cntWhitspace();
+        if (whitespaceCnt > 1) {
+          System.out.println("break");
+          return;
+        }
         func.accept(p, false);
       }
     }
